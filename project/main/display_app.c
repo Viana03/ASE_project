@@ -2,26 +2,35 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-
-#include "st7735.h" 
+#include "st7735.h"
 
 static const char *TAG = "DISPLAY_APP";
 
 void display_init(void) {
     ESP_LOGI(TAG, "A inicializar o barramento SPI e o driver ST7735...");
     
-    // config dos pinos
-    st7735_init_pins(TFT_MOSI_PIN, TFT_SCLK_PIN, TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
+    //Criar a struct de config de acordo com o guiao de tft
+    st7735_config_t cfg = {
+        .mosi_io_num = TFT_MOSI_PIN,
+        .sclk_io_num = TFT_SCLK_PIN,
+        .cs_io_num = TFT_CS_PIN,
+        .dc_io_num = TFT_DC_PIN,
+        .rst_io_num = TFT_RST_PIN,
+        .bl_io_num = TFT_BL_PIN,
+        .host_id = SPI2_HOST // Barramento SPI standard do ESP32
+    };
     
-    // Inicializar o controlador gráfico interno
-    st7735_init();
+    //Inicializar o controlador gráfico passando a config
+    if (st7735_init(&cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "Falha crítica ao iniciar o display TFT!");
+        return;
+    }
     
-    // Define a orientação do ecrã (0 a 3, dependendo de como o vamos montar na bicicleta)
+    // Define a orientação do ecrã (1 = Paisagem / Landscape)
     st7735_set_rotation(1); 
     
-    // Limpa o ecra colocando-o a preto (estado de repouso)
-    st7735_fill_screen(COLOR_BLACK);
+    // Limpa o ecrã colocando-o a preto usando a macro da biblioteca
+    st7735_fill_screen(ST7735_BLACK);
     
     ESP_LOGI(TAG, "Ecrã TFT pronto e em stand-by.");
 }
@@ -29,15 +38,16 @@ void display_init(void) {
 void display_show_alert(void) {
     ESP_LOGW(TAG, "A desenhar o Alerta de Roubo no TFT...");
     
-    // 1. Pinta o fundo todo a Vermelho Vivo para chamar a atenção
-    st7735_fill_screen(COLOR_RED);
+    // 1. Pinta o fundo todo a Vermelho Vivo
+    st7735_fill_screen(ST7735_RED);
     
-    // 2. Escreve a mensagem de pânico em Branco
-    st7735_draw_string(10, 20, "ALERTA:", COLOR_WHITE, FONT_LARGE);
-    st7735_draw_string(10, 45, "ROUBO DETETADO!", COLOR_WHITE, FONT_MEDIUM);
+    // 2. Escreve a mensagem.
+    // exige 6 parâmetros: (X, Y, Texto, Cor da Letra, Cor do Fundo da Letra, Escala/Tamanho)
+    st7735_draw_string(10, 20, "ALERTA:", ST7735_WHITE, ST7735_RED, 2);
+    st7735_draw_string(10, 45, "ROUBO DETETADO!", ST7735_WHITE, ST7735_RED, 1);
 }
 
 void display_clear(void) {
-    // Volta a colocar o ecrã a preto quando o alarme for desarmado
-    st7735_fill_screen(COLOR_BLACK);
+    // Volta a colocar o ecrã a preto quando for necessário
+    st7735_fill_screen(ST7735_BLACK);
 }

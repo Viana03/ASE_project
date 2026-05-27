@@ -12,6 +12,10 @@ static esp_err_t mpu6050_write_byte(uint8_t reg_addr, uint8_t data) {
     return i2c_master_write_to_device(I2C_MASTER_NUM, MPU6050_ADDR, write_buf, sizeof(write_buf), pdMS_TO_TICKS(100));
 }
 
+static esp_err_t mpu6050_read_bytes(uint8_t reg_addr, uint8_t *data, size_t len) {
+    return i2c_master_write_read_device(I2C_MASTER_NUM, MPU6050_ADDR, &reg_addr, 1, data, len, pdMS_TO_TICKS(100));
+}
+
 esp_err_t mpu6050_init(void) {
     ESP_LOGI(TAG, "A configurar barramento I2C Master...");
     
@@ -64,12 +68,35 @@ esp_err_t mpu6050_init(void) {
     return err;
 }
 
-void mpu6050_limpar_interrupcao(void) {
+esp_err_t mpu6050_read_data(int16_t *ax, int16_t *ay, int16_t *az,
+                            int16_t *gx, int16_t *gy, int16_t *gz) {
+    uint8_t raw[14] = {0};
+    esp_err_t err = mpu6050_read_bytes(0x3B, raw, sizeof(raw));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    *ax = (int16_t)((raw[0] << 8) | raw[1]);
+    *ay = (int16_t)((raw[2] << 8) | raw[3]);
+    *az = (int16_t)((raw[4] << 8) | raw[5]);
+    *gx = (int16_t)((raw[8] << 8) | raw[9]);
+    *gy = (int16_t)((raw[10] << 8) | raw[11]);
+    *gz = (int16_t)((raw[12] << 8) | raw[13]);
+
+    return ESP_OK;
+}
+
+esp_err_t mpu6050_limpar_interrupcao(void) {
     uint8_t reg_status = 0x3A; // Registo INT_STATUS do MPU6050
     uint8_t buffer_leitura = 0;
-    
+
     // Fazemos esta leitura para "limpar" o alarme e permitir que o sistema volte a dormir.
-    i2c_master_write_read_device(I2C_MASTER_NUM, MPU6050_ADDR, &reg_status, 1, &buffer_leitura, 1, pdMS_TO_TICKS(100));
-    
-    ESP_LOGI(TAG, "Registo de interrupção limpo. Pino INT de volta a 0V.");
+    esp_err_t err = i2c_master_write_read_device(I2C_MASTER_NUM, MPU6050_ADDR,
+                                                 &reg_status, 1, &buffer_leitura, 1,
+                                                 pdMS_TO_TICKS(100));
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Registo de interrupcao limpo. Pino INT de volta a 0V.");
+    }
+
+    return err;
 }

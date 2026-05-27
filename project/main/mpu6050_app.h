@@ -8,7 +8,7 @@
 #define I2C_MASTER_SDA_IO   6
 #define I2C_MASTER_SCL_IO   7
 #define I2C_MASTER_NUM      0
-#define I2C_MASTER_FREQ     400000
+#define I2C_MASTER_FREQ_HZ  400000
 #define MPU6050_ADDR        0x68
 
 
