@@ -6,13 +6,17 @@
 #include "esp_log.h"
 #include "esp_tls.h"
 #include "mqtt_client.h"
+#include "nvs_flash.h"
 #include <string.h>
 
 static const char *TAG = "MQTT_APP";
 static EventGroupHandle_t wifi_event_group;
 static const int WIFI_CONNECTED_BIT = BIT0;
+static EventGroupHandle_t mqtt_event_group;
+static const int MQTT_CONNECTED_BIT = BIT1;
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 static bool mqtt_published = false;
+extern const uint8_t hivemq_pem_start[] asm("_binary_isrgrootx1_pem_start");
 
 // Wi-Fi credentials
 #define WIFI_SSID       "VilarSpot"
@@ -25,9 +29,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "Wi-Fi disconnected");
+        ESP_LOGW(TAG, "Wi-Fi disconnected, retrying...");
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
-        // Don't auto-reconnect - we want fast failure
+        esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -38,7 +42,15 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 bool wifi_init_and_connect(void)
 {
     ESP_LOGI(TAG, "Initializing Wi-Fi...");
-    
+
+    // NVS must be initialized before Wi-Fi
+    esp_err_t nvs_ret = nvs_flash_init();
+    if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_ret);
+
     // Initialize TCP stack and event loop if not already done
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -61,7 +73,7 @@ bool wifi_init_and_connect(void)
             .ssid = WIFI_SSID,
             .password = WIFI_PASS,
             .threshold = {
-                .authmode = WIFI_AUTH_WPA2_PSK,  // Minimum security
+                .authmode = WIFI_AUTH_WPA2_PSK,
             },
         },
     };
@@ -95,6 +107,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT connected to broker");
+            if (mqtt_event_group) {
+                xEventGroupSetBits(mqtt_event_group, MQTT_CONNECTED_BIT);
+            }
             break;
             
         case MQTT_EVENT_DISCONNECTED:
@@ -118,45 +133,56 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 bool mqtt_init(void)
 {
     ESP_LOGI(TAG, "Initializing MQTT with TLS...");
-    
-    // MQTT configuration with TLS
+
+    mqtt_event_group = xEventGroupCreate();
+
+    // isrgrootx1.pem is the broker's CA certificate for server verification
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker = {
             .address = {
                 .uri = MQTT_BROKER_URI,
             },
             .verification = {
-                .skip_cert_common_name_check = false,  // Strict verification
+                .certificate = (const char *)hivemq_pem_start,
+                .skip_cert_common_name_check = false,
             }
         },
         .credentials = {
-            .username = "aseadmin",  
+            .username = "aseadmin",
             .authentication = {
-                .password = "ASEadmin123",  
-                .certificate = NULL,
-                .key = NULL,
+                .password = "ASEadmin123",
             }
         },
         .network = {
-            .timeout_ms = 3000,  // 3 second timeout
+            .timeout_ms = 3000,
         },
         .session = {
-            .keepalive = 10,  // 10 seconds keepalive
+            .keepalive = 10,
         }
     };
-    
+
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
-    
+
     esp_err_t err = esp_mqtt_client_start(mqtt_client);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start MQTT client: %s", esp_err_to_name(err));
+        vEventGroupDelete(mqtt_event_group);
+        mqtt_event_group = NULL;
         return false;
     }
-    
-    // Wait briefly for connection (non-blocking, just a quick check)
-    vTaskDelay(pdMS_TO_TICKS(500));
-    return true;
+
+    // Wait for TLS handshake + MQTT CONNACK with timeout
+    EventBits_t bits = xEventGroupWaitBits(mqtt_event_group, MQTT_CONNECTED_BIT,
+                                            pdFALSE, pdTRUE,
+                                            pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
+    if (bits & MQTT_CONNECTED_BIT) {
+        ESP_LOGI(TAG, "MQTT connected successfully");
+        return true;
+    }
+
+    ESP_LOGW(TAG, "MQTT connection timeout (%d ms)", MQTT_CONNECT_TIMEOUT_MS);
+    return false;
 }
 
 bool mqtt_send_alert(void)
@@ -208,7 +234,12 @@ void mqtt_cleanup(void)
         vEventGroupDelete(wifi_event_group);
         wifi_event_group = NULL;
     }
-    
+
+    if (mqtt_event_group) {
+        vEventGroupDelete(mqtt_event_group);
+        mqtt_event_group = NULL;
+    }
+
     ESP_LOGI(TAG, "MQTT and Wi-Fi cleaned up");
 }
 

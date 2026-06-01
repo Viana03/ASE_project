@@ -37,35 +37,28 @@ esp_err_t mpu6050_init(void) {
     // INTERRUPÇÃO DE HARDWARE (WAKE-ON-MOTION) ---
     ESP_LOGI(TAG, "A injetar registos Wake-on-Motion no hardware do sensor...");
 
-    // acorda o sensor escrevendo 0x00 no registo PWR_MGMT_1 (0x6B)
-    err |= mpu6050_write_byte(0x6B, 0x00);
+    // Acorda o sensor escrevendo 0x00 no registo PWR_MGMT_1 (0x6B)
+    if ((err = mpu6050_write_byte(0x6B, 0x00)) != ESP_OK) return err;
     vTaskDelay(pdMS_TO_TICKS(100)); // Tempo obrigatório para o sensor estabilizar a energia
 
-    err |= mpu6050_write_byte(0x1C, 0x01);
+    // Ativa o filtro high-pass de 5Hz para detetar variações de aceleração (ACCEL_CONFIG)
+    if ((err = mpu6050_write_byte(0x1C, 0x01)) != ESP_OK) return err;
 
-    // Escala de 1 a 255 (onde 1 é ultra-sensível e 255 é um choque extremo).
-    // O valor 20 deteta perfeitamente alguém a mexer ou a tombar a bicicleta.
-    err |= mpu6050_write_byte(0x1F, 20);
+    // Threshold de deteção de movimento (MOT_THR): 20 = sensível a abanões, não a vibrações
+    if ((err = mpu6050_write_byte(0x1F, 20)) != ESP_OK) return err;
 
-    // Define a duração mínima do abanão no registo MOT_DUR (0x20)
-    // O valor 10 exige que o impacto dure pelo menos 10ms, eliminando falsos alarmes de vibrações da estrada.
-    err |= mpu6050_write_byte(0x20, 10);
+    // Duração mínima do abanão (MOT_DUR): 10ms para eliminar falsos alarmes
+    if ((err = mpu6050_write_byte(0x20, 10)) != ESP_OK) return err;
 
-    // Configura o comportamento elétrico do pino físico INT no registo INT_PIN_CFG (0x37)
-    // 0x00 configura o pino para Active HIGH (manda 3.3V quando há roubo) em modo Push-Pull
-    err |= mpu6050_write_byte(0x37, 0x00);
+    // INT_PIN_CFG (0x37): Active HIGH, Push-Pull, Latch until INT_STATUS is read (bit 5 = LATCH_INT_EN)
+    //if ((err = mpu6050_write_byte(0x37, 0x20)) != ESP_OK) return err;
+    if ((err = mpu6050_write_byte(0x37, 0xA0)) != ESP_OK) return err;
 
-    // Ativa o canal de interrupção de movimento no registo INT_ENABLE (0x38)
-    // Ativa o bit 6 (MOT_EN) injetando o valor em hexadecimal 0x40
-    err |= mpu6050_write_byte(0x38, 0x40);
+    // INT_ENABLE (0x38): bit 6 = MOT_EN
+    if ((err = mpu6050_write_byte(0x38, 0x40)) != ESP_OK) return err;
 
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "MPU6050 armado em modo Sentinela com sucesso!");
-    } else {
-        ESP_LOGE(TAG, "Erro crítico ao configurar os registos internos do MPU6050.");
-    }
-
-    return err;
+    ESP_LOGI(TAG, "MPU6050 armado em modo Sentinela com sucesso!");
+    return ESP_OK;
 }
 
 esp_err_t mpu6050_read_data(int16_t *ax, int16_t *ay, int16_t *az,

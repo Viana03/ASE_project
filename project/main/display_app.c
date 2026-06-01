@@ -47,7 +47,20 @@ void display_show_alert(void) {
     st7735_draw_string(10, 45, "ROUBO DETETADO!", ST7735_WHITE, ST7735_RED, 1);
 }
 
+void display_show_locked(void) {
+    ESP_LOGI(TAG, "A mostrar estado LOCKED no TFT...");
+    st7735_fill_screen(ST7735_RED);
+    st7735_draw_string(10, 20, "SISTEMA:", ST7735_WHITE, ST7735_RED, 2);
+    st7735_draw_string(10, 50, "LOCKED", ST7735_WHITE, ST7735_RED, 2);
+}
+
+void display_show_unlocked(void) {
+    ESP_LOGI(TAG, "A mostrar estado UNLOCKED no TFT...");
+    st7735_fill_screen(ST7735_GREEN);
+    st7735_draw_string(10, 20, "SISTEMA:", ST7735_BLACK, ST7735_GREEN, 2);
+    st7735_draw_string(10, 50, "UNLOCKED", ST7735_BLACK, ST7735_GREEN, 2);
+}
+
 void display_clear(void) {
-    // Volta a colocar o ecrã a preto quando for necessário
     st7735_fill_screen(ST7735_BLACK);
 }

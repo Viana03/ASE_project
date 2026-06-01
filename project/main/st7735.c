@@ -78,14 +78,16 @@ static const uint8_t font5x7[96 * 5] = {
 static void write_command(uint8_t cmd) {
     spi_transaction_t t = { .length = 8, .tx_buffer = &cmd };
     gpio_set_level(dc_pin, 0);
-    spi_device_polling_transmit(spi, &t);
+    esp_err_t ret = spi_device_polling_transmit(spi, &t);
+    if (ret != ESP_OK) ESP_LOGE(TAG, "SPI CMD 0x%02X falhou: %s", cmd, esp_err_to_name(ret));
 }
 
 static void write_data(const uint8_t *data, size_t len) {
     if (len == 0) return;
     spi_transaction_t t = { .length = len * 8, .tx_buffer = data };
     gpio_set_level(dc_pin, 1);
-    spi_device_polling_transmit(spi, &t);
+    esp_err_t ret = spi_device_polling_transmit(spi, &t);
+    if (ret != ESP_OK) ESP_LOGE(TAG, "SPI DATA falhou: %s", esp_err_to_name(ret));
 }
 
 static inline void write_data_byte(uint8_t byte) {
@@ -196,13 +198,19 @@ void st7735_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c
     if (y + h > display_height) h = display_height - y;
     
     set_address_window(x, y, x + w - 1, y + h - 1);
-    size_t line_size = w * 2;
-    uint8_t *buffer = heap_caps_malloc(line_size, MALLOC_CAP_DMA);
-    if (!buffer) { ESP_LOGE(TAG, "DMA malloc falhou"); return; }
+    size_t total_size = (size_t)w * h * 2;
+    uint8_t *buffer = heap_caps_malloc(total_size, MALLOC_CAP_DMA);
+    if (!buffer) { 
+        ESP_LOGE(TAG, "DMA malloc falhou ao alocar %zu bytes", total_size); 
+        return; 
+    }
     
     uint8_t hi = color >> 8, lo = color & 0xFF;
-    for (size_t i = 0; i < w; i++) { buffer[i*2] = hi; buffer[i*2+1] = lo; }
-    for (uint16_t i = 0; i < h; i++) write_data(buffer, line_size);
+    for (size_t i = 0; i < (size_t)w * h; i++) { 
+        buffer[i*2] = hi; 
+        buffer[i*2+1] = lo; 
+    }
+    write_data(buffer, total_size);
     heap_caps_free(buffer);
 }
 
@@ -268,23 +276,21 @@ void st7735_draw_image(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uin
     
     set_address_window(x, y, x + w - 1, y + h - 1);
     
-    // Buffer para uma linha da imagem
-    size_t line_size = w * 2;
-    uint8_t *buffer = heap_caps_malloc(line_size, MALLOC_CAP_DMA);
+    // Buffer para a imagem toda
+    size_t total_size = (size_t)w * h * 2;
+    uint8_t *buffer = heap_caps_malloc(total_size, MALLOC_CAP_DMA);
     if (!buffer) { 
         ESP_LOGE(TAG, "DMA malloc falhou para imagem"); 
         return; 
     }
     
-    // Enviar linha por linha
-    for (uint16_t row = 0; row < h; row++) {
-        for (uint16_t col = 0; col < w; col++) {
-            uint16_t pixel = data[row * w + col];
-            buffer[col * 2] = pixel >> 8;      // High byte
-            buffer[col * 2 + 1] = pixel & 0xFF; // Low byte
-        }
-        write_data(buffer, line_size);
+    // Preparar o buffer e enviar
+    for (size_t i = 0; i < (size_t)w * h; i++) {
+        uint16_t pixel = data[i];
+        buffer[i * 2] = pixel >> 8;      // High byte
+        buffer[i * 2 + 1] = pixel & 0xFF; // Low byte
     }
+    write_data(buffer, total_size);
     
     heap_caps_free(buffer);
 }
